@@ -14,20 +14,22 @@ class OrderProcessor:
 
     def calculate_order_total(self, order: dict) -> dict:
         """Calculate the total price for an order."""
-        # BUG: No null check - crashes with TypeError if items is None
-        items = order["items"]
-        subtotal = 0
+        # FIX: Null-safety for items - default to empty list
+        items = order.get("items") or []
+        subtotal = 0.0
 
-        for item in items:  # TypeError: cannot iterate over None
-            # BUG: Integer division truncates decimal prices
-            item_total = item["price"] * item["quantity"] // 1
+        for item in items:
+            # FIX: Use float multiplication instead of integer division
+            price = float(item.get("price", 0))
+            quantity = int(item.get("quantity", 0))
+            item_total = price * quantity
             subtotal += item_total
 
-        tax = subtotal * self.tax_rate
-        total = subtotal + tax
+        tax = round(subtotal * self.tax_rate, 2)
+        total = round(subtotal + tax, 2)
 
         return {
-            "order_id": order["order_id"],
+            "order_id": order.get("order_id"),
             "subtotal": subtotal,
             "tax": tax,
             "total": total,
@@ -36,9 +38,10 @@ class OrderProcessor:
 
     def get_order_status(self, order: dict) -> str:
         """Get the fulfillment status of an order."""
-        # BUG: Direct dict access - raises KeyError when fulfillment missing
-        status = order["fulfillment"]["shipping_status"]
-        tracking = order["fulfillment"]["tracking_number"]
+        # FIX: Safe nested access with .get() and defaults
+        fulfillment = order.get("fulfillment") or {}
+        status = fulfillment.get("shipping_status", "unknown")
+        tracking = fulfillment.get("tracking_number", "N/A")
         return f"{status} - {tracking}"
 
     def validate_order(self, order: dict) -> list:
@@ -48,7 +51,12 @@ class OrderProcessor:
             errors.append("Missing order_id")
         if not order.get("customer_id"):
             errors.append("Missing customer_id")
-        # BUG: Does NOT validate that items is not None
+        # FIX: Validate items is not None and is a list
+        items = order.get("items")
+        if items is None:
+            errors.append("Items cannot be None")
+        elif not isinstance(items, list):
+            errors.append("Items must be a list")
         return errors
 
     def process_order(self, order: dict) -> dict:
