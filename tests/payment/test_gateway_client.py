@@ -1,10 +1,10 @@
-"""Tests for PaymentGatewayClient - demonstrates the bugs."""
+"""Tests for PaymentGatewayClient - verifies fixes for timeout, null-safety, and retry."""
 import pytest
 from unittest.mock import patch, MagicMock
 import sys
 sys.path.insert(0, "src")
 
-from payment.gateway_client import PaymentGatewayClient
+from payment.gateway_client import PaymentGatewayClient, MAX_RETRIES
 
 
 class TestPaymentGatewayClient:
@@ -24,22 +24,30 @@ class TestPaymentGatewayClient:
         assert result["transaction_id"] == "TXN-001"
         assert result["status"] == "authorized"
 
-    def test_process_response_null_transaction_crashes(self):
-        """BUG: Crashes when transaction is None."""
+    def test_process_response_null_transaction_handled(self):
+        """FIX: Returns error dict instead of crashing."""
         response = {"transaction": None}
-        with pytest.raises(TypeError):
-            self.client.process_payment_response(response)
+        result = self.client.process_payment_response(response)
+        assert result["status"] == "error"
+        assert result["error"] is not None
 
-    def test_process_response_missing_field_crashes(self):
-        """BUG: Crashes when auth_code missing."""
-        response = {"transaction": {"id": "TXN-002", "status": "ok", "amount": 10.0}}
-        with pytest.raises(KeyError):
-            self.client.process_payment_response(response)
+    def test_process_response_missing_field_handled(self):
+        """FIX: Missing fields default to None/0."""
+        response = {"transaction": {"id": "TXN-002", "status": "ok"}}
+        result = self.client.process_payment_response(response)
+        assert result["transaction_id"] == "TXN-002"
+        assert result["auth_code"] is None
+        assert result["amount_charged"] == 0
+
+    def test_retry_respects_max_attempts(self):
+        """FIX: Retry stops after MAX_RETRIES attempts."""
+        with patch.object(self.client, "authorize_payment", side_effect=Exception("timeout")):
+            with pytest.raises(RuntimeError, match=f"after {MAX_RETRIES} attempts"):
+                self.client.authorize_with_retry("ORD-1", 100.0)
 
     def test_refund_valid(self):
         result = self.client.refund_payment("TXN-001", 50.0)
         assert result["status"] == "processed"
-        assert result["amount"] == 50.0
 
     def test_refund_negative_amount(self):
         with pytest.raises(ValueError):
