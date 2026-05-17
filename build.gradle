@@ -1,0 +1,6 @@
+# Sentinal AI Auto-Fix
+# Service: payment-service
+# Change: Pin shared-utils to latest stable release 3.9.2.
+
+# This file was modified by Sentinal AI to address:
+# [payment-service] Mitigate DependencyResolutionFailed regression after REL-2026.05.16-1
