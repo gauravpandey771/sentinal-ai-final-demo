@@ -7,6 +7,9 @@ import json
 import urllib.request
 import time
 
+MAX_RETRIES = 3
+TIMEOUT_MS = 750
+
 
 class PaymentGatewayClient:
     """Client for external payment gateway communication."""
@@ -27,34 +30,51 @@ class PaymentGatewayClient:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        # BUG: No timeout parameter - request blocks indefinitely if gateway unresponsive
-        resp = urllib.request.urlopen(req)
+        # FIX: Added timeout to prevent indefinite blocking
+        resp = urllib.request.urlopen(req, timeout=TIMEOUT_MS / 1000)
         return json.loads(resp.read().decode())
 
     def process_payment_response(self, response: dict) -> dict:
         """Extract payment details from gateway response."""
-        # BUG: Direct nested key access - raises KeyError/TypeError on null response
-        transaction_id = response["transaction"]["id"]
-        status = response["transaction"]["status"]
-        auth_code = response["transaction"]["auth_code"]
-        amount = response["transaction"]["amount"]
+        # FIX: Added null-safety checks for nested fields
+        transaction = response.get("transaction")
+        if not transaction or not isinstance(transaction, dict):
+            return {
+                "transaction_id": None,
+                "status": "error",
+                "auth_code": None,
+                "amount_charged": 0,
+                "receipt": None,
+                "error": "Invalid or missing transaction in response",
+            }
+
+        transaction_id = transaction.get("id")
+        status = transaction.get("status", "unknown")
+        auth_code = transaction.get("auth_code")
+        amount = transaction.get("amount", 0)
 
         return {
             "transaction_id": transaction_id,
             "status": status,
             "auth_code": auth_code,
             "amount_charged": amount,
-            "receipt": f"RCP-{transaction_id}",
+            "receipt": f"RCP-{transaction_id}" if transaction_id else None,
         }
 
     def authorize_with_retry(self, order_id: str, amount: float, currency: str = "USD") -> dict:
-        """Retry authorization until success."""
-        # BUG: Infinite retry loop - no max attempts, no backoff, no circuit breaker
-        while True:
+        """Retry authorization with bounded retries and exponential backoff."""
+        # FIX: Added max retries, exponential backoff, and proper error propagation
+        last_error = None
+        for attempt in range(MAX_RETRIES):
             try:
                 return self.authorize_payment(order_id, amount, currency)
-            except Exception:
-                time.sleep(0.1)  # Spins forever on persistent failures
+            except Exception as e:
+                last_error = e
+                backoff = 0.1 * (2 ** attempt)  # Exponential backoff
+                time.sleep(backoff)
+        raise RuntimeError(
+            f"Payment authorization failed after {MAX_RETRIES} attempts: {last_error}"
+        )
 
     def refund_payment(self, transaction_id: str, amount: float) -> dict:
         """Process a refund for a given transaction."""
